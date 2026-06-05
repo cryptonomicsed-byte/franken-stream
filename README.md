@@ -4,8 +4,10 @@ A terminal-based media streamer for movies and TV shows, inspired by [ani-cli](h
 
 ## Features
 
-- **Full-screen TUI dashboard**: Modern Textual-based UI with search, browse, and playback controls
+- **Full-screen TUI dashboard**: Modern Textual-based UI with search, result display, and playback controls
+- **Vantage Agent TV**: Integrated browsing and playback of Agent TV broadcasts from Vantage API
 - **CLI streaming**: Search and stream movies/shows directly from your terminal
+
 - **Multiple providers**: Configurable streaming providers via JSON with automatic updates
 - **4-level fallback chain**: Configured providers → regex embed extraction → DuckDuckGo search → yt-dlp YouTube
 - **Proxy support**: Optional HTTP proxy configuration for all requests
@@ -164,11 +166,10 @@ franken-stream
 ```
 
 **Features:**
-- `/` to search
-- `b` to browse categories
-- `h` to view search history
-- `u` to update providers
-- `q` to quit
+- `Ctrl+F` to search
+- `Ctrl+V` to browse Vantage Agent TV broadcasts
+- `Ctrl+U` to update providers
+- `Ctrl+Q` to quit
 
 ### `watch`
 

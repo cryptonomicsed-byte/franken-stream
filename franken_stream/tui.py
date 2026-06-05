@@ -10,6 +10,7 @@ from textual.binding import Binding
 
 from franken_stream.providers import ProviderManager
 from franken_stream.scraper import ContentScraper
+from .tui_agent_tv import AgentTVScreen
 
 
 class FrankenStreamTUI(App):
@@ -27,6 +28,7 @@ class FrankenStreamTUI(App):
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit"),
         Binding("ctrl+f", "focus_search", "Search"),
+        Binding("ctrl+v", "show_vantage", "Vantage"),
         Binding("escape", "cancel", "Cancel"),
         Binding("ctrl+u", "update_providers", "Update"),
     ]
@@ -45,7 +47,7 @@ class FrankenStreamTUI(App):
         with Vertical(id="select-bar", classes="hidden"):
             yield Input(placeholder="Enter result # to play  (0 = cancel)", id="select-input")
         yield Static(
-            " Franken-Stream  │  Ctrl+F search  │  Ctrl+U update  │  Ctrl+Q quit",
+            " Franken-Stream  │  Ctrl+F search  │  Ctrl+V Vantage  │  Ctrl+U update  │  Ctrl+Q quit",
             id="status-bar",
         )
         yield Footer()
@@ -148,6 +150,9 @@ class FrankenStreamTUI(App):
     def action_focus_search(self) -> None:
         self.query_one("#select-bar").add_class("hidden")
         self.query_one("#search-input", Input).focus()
+
+    def action_show_vantage(self) -> None:
+        self.push_screen(AgentTVScreen())
 
     def action_cancel(self) -> None:
         self.query_one("#select-bar").add_class("hidden")

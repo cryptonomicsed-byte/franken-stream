@@ -30,6 +30,10 @@ franken-stream update
 # Search for a movie
 franken-stream watch "Inception"
 
+# Launch TUI Dashboard with Vantage Agent TV
+franken-stream
+# Inside TUI: Ctrl+F to search, Ctrl+V for Vantage Agent TV broadcasts
+
 # Use with proxy
 franken-stream watch "The Matrix" --proxy http://proxy:8080
 
