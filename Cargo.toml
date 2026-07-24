@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/server", "crates/shared"]
+members = ["crates/server", "crates/shared", "crates/py-scraper"]
 resolver = "2"
 
 [workspace.dependencies]

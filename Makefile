@@ -13,6 +13,7 @@ help:
 	@echo "  make clean     Remove build artifacts"
 	@echo "  make update    Refresh streaming providers"
 	@echo "  make rust      Build Rust server (requires cargo)"
+	@echo "  make native    Build native Rust scraper (requires maturin)"
 
 install:
 	$(PIP) install -e .
@@ -37,3 +38,6 @@ update:
 
 rust:
 	cargo build --release -p franken-server
+
+native:
+	cd crates/py-scraper && maturin develop

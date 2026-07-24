@@ -16,7 +16,6 @@ from franken_stream.cache import FTSCache
 from franken_stream.player import PremiumPlayer
 from franken_stream.preloader import PredictiveLoader
 from franken_stream.providers import ProviderManager
-from franken_stream.scraper import ContentScraper
 from franken_stream.watchlist import Watchlist
 
 app = typer.Typer(help="Web UI server commands")
@@ -124,6 +123,46 @@ async def v1_search(request: Request):
                 seen.add(url)
                 raw.append((title, url))
 
+        # Relevance sorting
+        def _score(item: Tuple[str, str]) -> float:
+            title = item[0].lower()
+            q = query.lower()
+            if title == q: return 10.0
+            
+            q_words = [w for w in q.split() if len(w) > 2]
+            if not q_words: return 0.0
+            
+            title_words = title.split()
+            
+            # Count word matches
+            matches = 0
+            for qw in q_words:
+                if qw in title:
+                    matches += 1
+                    # Bonus for exact word match
+                    if any(tw == qw for tw in title_words):
+                        matches += 0.5
+            
+            # Bonus for phrase match
+            if q in title: matches += 2.0
+            
+            score = float(matches) / len(q_words)
+            
+            # Penalty for very long titles (often noise)
+            if len(title) > 60: score *= 0.8
+            
+            # Penalty for "random" look (too many non-alphanumeric)
+            non_alnum = len([c for c in title if not c.isalnum() and not c.isspace()])
+            if non_alnum > 5: score *= 0.7
+            
+            return score
+
+        raw.sort(key=_score, reverse=True)
+
+        # Filter out generic/low-relevance results
+        # Only keep results that match at least one significant query word
+        raw = [r for r in raw if _score(r) > 0.5]
+
         if raw:
             fts.store(query, raw)
         asyncio.create_task(_get_preloader().preload(raw[:3]))
@@ -177,7 +216,9 @@ async def search(request: Request):
 
 @web_app.post("/api/embed")
 async def get_embed(request: Request):
-    """Extract embed URL from a page"""
+    """Extract embed URL from a page. Uses the async scraper (not the sync
+    ContentScraper) since the crawl4ai + page-agent fallback chain is
+    async-only -- see async_scraper.py's fetch_embed_from_page."""
     try:
         data = await request.json()
         page_url = data.get("url")
@@ -186,10 +227,8 @@ async def get_embed(request: Request):
         if not page_url:
             raise HTTPException(status_code=400, detail="URL is required")
 
-        pm = ProviderManager()
-        scraper = ContentScraper(provider_manager=pm)
-
-        embed_url = scraper.fetch_embed_from_page(page_url, base_url=base_url)
+        scraper = AsyncContentScraper(provider_manager=_shared_pm)
+        embed_url = await scraper.fetch_embed_from_page(page_url, base_url=base_url)
 
         return {"status": "ok", "embed_url": embed_url}
     except Exception as e:

@@ -37,9 +37,17 @@ class InternetArchiveProvider(ProviderPlugin):
 
             docs = data.get("response", {}).get("docs", [])
             results = []
+            query_words: List[str] = [w.lower() for w in query.split()]
+            
             for doc in docs:
                 ident = doc.get("identifier", "")
                 title = doc.get("title", ident)
+                title_lower = title.lower()
+                
+                # Relevance filter: title must contain all significant query words
+                if not all(w in title_lower for w in query_words if len(w) > 3):
+                    continue
+                    
                 year = self._parse_year(str(doc.get("year", "")))
                 if not ident:
                     continue
