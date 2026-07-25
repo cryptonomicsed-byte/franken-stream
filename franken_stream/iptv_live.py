@@ -19,6 +19,11 @@ _countries_cache: Optional[List[dict]] = None
 _countries_cache_at: float = 0.0
 _channels_cache: Dict[str, tuple] = {}  # code -> (channels, fetched_at)
 
+# iptv-org's countries.json uses ISO 3166 codes, but a handful of their
+# playlist filenames don't match (confirmed live: gb.m3u -> 404, uk.m3u ->
+# 200). Alias known mismatches rather than silently returning 0 channels.
+_CODE_ALIASES = {"gb": "uk"}
+
 _EXTINF_RE = re.compile(
     r'#EXTINF:-?\d+\s*(?P<attrs>(?:[a-zA-Z-]+="[^"]*"\s*)*),(?P<title>.+)'
 )
@@ -71,7 +76,7 @@ async def list_channels(country_code: str) -> List[dict]:
     """[{title, url, group, logo}] for a country. url is a real .m3u8 HLS
     stream, not a synthetic identifier -- playable directly by hls.js or a
     native-HLS <video> element. Cached 1h per country."""
-    code = country_code.lower()
+    code = _CODE_ALIASES.get(country_code.lower(), country_code.lower())
     cached = _channels_cache.get(code)
     if cached and (time.time() - cached[1]) < _CACHE_TTL:
         return cached[0]
