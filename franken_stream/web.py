@@ -23,6 +23,10 @@ from franken_stream.tmdb_embed import (
     is_tmdb_url, resolve_tmdb_embed_all,
 )
 from franken_stream.iptv_live import list_countries, list_channels
+from franken_stream.audio_sources import (
+    itunes_search, podcast_episodes, soundcloud_embed,
+    youtube_configured, youtube_search,
+)
 
 app = typer.Typer(help="Web UI server commands")
 
@@ -291,6 +295,45 @@ async def live_channels(country_code: str):
         return {"status": "ok", "country": country_code.upper(), "channels": channels}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"iptv-org fetch failed: {e}")
+
+
+@web_app.get("/api/audio/search")
+async def audio_search(term: str, media: str = "music", entity: Optional[str] = None):
+    """Real iTunes Search API results -- albums/songs (media=music) or
+    podcasts (media=podcast). Songs carry a legal 30s preview_url;
+    podcasts carry a real public feed_url (see /api/audio/podcast/episodes)."""
+    if not term.strip():
+        raise HTTPException(422, "term is required")
+    results = await itunes_search(term.strip(), media=media, entity=entity)
+    return {"status": "ok", "results": results}
+
+
+@web_app.get("/api/audio/podcast/episodes")
+async def audio_podcast_episodes(feed_url: str):
+    """Real episode list parsed directly from a podcast's public RSS feed
+    -- direct, full-length, legal audio URLs, no scraping."""
+    episodes = await podcast_episodes(feed_url)
+    return {"status": "ok", "episodes": episodes}
+
+
+@web_app.get("/api/audio/soundcloud/embed")
+async def audio_soundcloud_embed(url: str):
+    """Real SoundCloud oEmbed lookup for a track/playlist URL the caller
+    already has (no key-free full-catalog search exists)."""
+    result = await soundcloud_embed(url)
+    if not result:
+        raise HTTPException(404, "Could not resolve a SoundCloud embed for that URL")
+    return {"status": "ok", **result}
+
+
+@web_app.get("/api/audio/youtube/search")
+async def audio_youtube_search(term: str):
+    """Official YouTube Data API v3 search -- degrades to empty results
+    if YOUTUBE_API_KEY isn't configured, same pattern as TMDB."""
+    if not youtube_configured():
+        return {"status": "ok", "results": [], "configured": False}
+    results = await youtube_search(term)
+    return {"status": "ok", "results": results, "configured": True}
 
 
 @web_app.post("/api/embed")
