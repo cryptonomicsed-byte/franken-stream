@@ -29,15 +29,23 @@ TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "")
 TMDB_BASE = "https://api.themoviedb.org/3"
 TMDB_IMG_BASE = "https://image.tmdb.org/t/p/w342"
 
-# Ordered by reliability/reputation observed in the open-source streaming
-# community; first one wins in extract order but all are tried.
+# Ordered by ACTUAL rendered reliability, verified live with Playwright
+# (2026-07-25) against "Inception" (tmdb id 27205), not assumption:
+#   vidlink.pro   -- real <video> element, playing, timestamps advancing. WORKS.
+#   2embed.cc     -- loads but lands on 2embed's own wrapper/landing page, not
+#                    the direct player (this URL format doesn't reach the
+#                    video) -- kept as fallback pending a corrected URL format.
+#   multiembed.mov, vidsrc.to -- load (200) but render an empty body, no
+#                    video element found after a real wait.
+#   vidsrc.xyz    -- domain does not even resolve (net::ERR_NAME_NOT_RESOLVED,
+#                    confirmed dead), kept last only in case it comes back.
 EMBED_PROVIDERS = [
     # (name, movie_url_fmt, tv_url_fmt) -- {id} = tmdb id, {s}/{e} = season/episode
+    ("vidlink.pro", "https://vidlink.pro/movie/{id}", "https://vidlink.pro/tv/{id}/{s}/{e}"),
+    ("2embed.cc", "https://www.2embed.cc/embed/{id}", "https://www.2embed.cc/embedtv/{id}&s={s}&e={e}"),
+    ("multiembed.mov", "https://multiembed.mov/?video_id={id}&tmdb=1", "https://multiembed.mov/?video_id={id}&tmdb=1&s={s}&e={e}"),
     ("vidsrc.to", "https://vidsrc.to/embed/movie/{id}", "https://vidsrc.to/embed/tv/{id}/{s}/{e}"),
     ("vidsrc.xyz", "https://vidsrc.xyz/embed/movie/{id}", "https://vidsrc.xyz/embed/tv/{id}/{s}/{e}"),
-    ("2embed.cc", "https://www.2embed.cc/embed/{id}", "https://www.2embed.cc/embedtv/{id}&s={s}&e={e}"),
-    ("vidlink.pro", "https://vidlink.pro/movie/{id}", "https://vidlink.pro/tv/{id}/{s}/{e}"),
-    ("multiembed.mov", "https://multiembed.mov/?video_id={id}&tmdb=1", "https://multiembed.mov/?video_id={id}&tmdb=1&s={s}&e={e}"),
 ]
 
 
