@@ -17,6 +17,11 @@ from franken_stream.player import PremiumPlayer
 from franken_stream.preloader import PredictiveLoader
 from franken_stream.providers import ProviderManager
 from franken_stream.watchlist import Watchlist
+from franken_stream.tmdb_embed import (
+    tmdb_configured, tmdb_search, tmdb_trending, tmdb_now_playing,
+    is_tmdb_url, resolve_tmdb_embed,
+)
+from franken_stream.iptv_live import list_countries, list_channels
 
 app = typer.Typer(help="Web UI server commands")
 
@@ -182,6 +187,20 @@ async def search(request: Request):
         if not query:
             raise HTTPException(status_code=400, detail="Query is required")
 
+        # TMDB-first: real, sanctioned metadata API, not fighting anti-bot.
+        # The 9 scraped providers below are ~100% dead (Cloudflare/JWT/JS
+        # gates) as of the 2026-07-25 live audit -- kept only as fallback.
+        if tmdb_configured():
+            tmdb_results = await tmdb_search(query)
+            if tmdb_results:
+                return {
+                    "status": "ok",
+                    "query": query,
+                    "results": [{"title": r["title"], "url": r["url"]} for r in tmdb_results],
+                    "cached": False,
+                    "source": "tmdb",
+                }
+
         # FTS5 cache check
         fts = FTSCache()
         cached = fts.lookup(query)
@@ -214,6 +233,40 @@ async def search(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@web_app.get("/api/trending")
+async def trending(window: str = "week", media_type: str = "all"):
+    """No-search-needed grid: trending movies/TV from TMDB."""
+    results = await tmdb_trending(window=window, media_type=media_type)
+    return {"status": "ok", "results": [{"title": r["title"], "url": r["url"], "thumbnail": r["thumbnail"]} for r in results]}
+
+
+@web_app.get("/api/now-playing")
+async def now_playing():
+    results = await tmdb_now_playing()
+    return {"status": "ok", "results": [{"title": r["title"], "url": r["url"], "thumbnail": r["thumbnail"]} for r in results]}
+
+
+@web_app.get("/api/live/countries")
+async def live_countries():
+    """Real Live TV: iptv-org's country list, zero scraping."""
+    try:
+        return {"status": "ok", "countries": await list_countries()}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"iptv-org fetch failed: {e}")
+
+
+@web_app.get("/api/live/channels/{country_code}")
+async def live_channels(country_code: str):
+    """Real HLS (.m3u8) channel list for a country, from iptv-org's static
+    playlists -- these URLs are directly playable (hls.js or native HLS),
+    not resolved through /api/embed."""
+    try:
+        channels = await list_channels(country_code)
+        return {"status": "ok", "country": country_code.upper(), "channels": channels}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"iptv-org fetch failed: {e}")
+
+
 @web_app.post("/api/embed")
 async def get_embed(request: Request):
     """Extract embed URL from a page. Uses the async scraper (not the sync
@@ -226,6 +279,12 @@ async def get_embed(request: Request):
 
         if not page_url:
             raise HTTPException(status_code=400, detail="URL is required")
+
+        # TMDB search results carry a synthetic `tmdb:{type}:{id}` url --
+        # resolve straight to an embed-provider URL, no scraping involved.
+        if is_tmdb_url(page_url):
+            embed_url = await resolve_tmdb_embed(page_url)
+            return {"status": "ok", "embed_url": embed_url}
 
         scraper = AsyncContentScraper(provider_manager=_shared_pm)
         embed_url = await scraper.fetch_embed_from_page(page_url, base_url=base_url)
