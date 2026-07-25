@@ -132,19 +132,41 @@ def is_tmdb_url(url: str) -> bool:
     return url.startswith("tmdb:movie:") or url.startswith("tmdb:tv:")
 
 
-async def resolve_tmdb_embed(url: str, season: int = 1, episode: int = 1) -> Optional[str]:
-    """url is a `tmdb:{type}:{id}` identifier from tmdb_search/tmdb_trending.
-    Embed providers don't require a liveness probe -- they're built to be
-    iframed directly -- so this just picks the first provider in priority
-    order and returns its URL. The frontend iframe will show that
-    provider's own error state if it's down; a future iteration could
-    HEAD-check each in parallel and pick the first 200, but that adds
-    latency for a class of provider that's historically been far more
-    stable than the scraped sites."""
+def resolve_tmdb_embed_all(url: str, season: int = 1, episode: int = 1) -> List[dict]:
+    """Returns ALL candidate embed URLs, in provider-priority order:
+    [{"provider": name, "url": embed_url}, ...].
+
+    Correction (2026-07-25, live investigation): a prior version of this
+    function returned only EMBED_PROVIDERS[0] on the assumption that these
+    embed sites "don't require a liveness probe." That assumption was
+    wrong -- rendered vidsrc.to's actual embed chain with Playwright and
+    found its nested player (vsembed.ru) runs anti-automation/devtool
+    detection that redirects to a fake 404 trap page
+    (theajack.github.io/disable-devtool/404.html), plus loads sketchy
+    ad-redirect domains (cloudorchestranova.com, cloudnestra.com). A
+    plain HTTP 200 from the outer page (what a server-side liveness probe
+    would see) does NOT mean the video actually plays -- the failure
+    happens client-side, after JS runs, which a HEAD-check can't detect
+    either. So: no amount of server-side probing reliably predicts which
+    provider will actually render for a given user. The honest fix is
+    exposing all candidates and letting the frontend offer "try another
+    source" when the first one doesn't play, not pretending the backend
+    can guarantee liveness."""
     if not is_tmdb_url(url):
-        return None
+        return []
     _, mtype, tmdb_id = url.split(":", 2)
-    name, movie_fmt, tv_fmt = EMBED_PROVIDERS[0]
-    if mtype == "movie":
-        return movie_fmt.format(id=tmdb_id)
-    return tv_fmt.format(id=tmdb_id, s=season, e=episode)
+    candidates = []
+    for name, movie_fmt, tv_fmt in EMBED_PROVIDERS:
+        if mtype == "movie":
+            candidates.append({"provider": name, "url": movie_fmt.format(id=tmdb_id)})
+        else:
+            candidates.append({"provider": name, "url": tv_fmt.format(id=tmdb_id, s=season, e=episode)})
+    return candidates
+
+
+async def resolve_tmdb_embed(url: str, season: int = 1, episode: int = 1) -> Optional[str]:
+    """Back-compat: first candidate only. Prefer resolve_tmdb_embed_all()
+    for real usage -- see its docstring for why a single "the" embed URL
+    isn't a reliable concept for this class of provider."""
+    all_candidates = resolve_tmdb_embed_all(url, season, episode)
+    return all_candidates[0]["url"] if all_candidates else None

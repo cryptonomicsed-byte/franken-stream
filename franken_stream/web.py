@@ -20,7 +20,7 @@ from franken_stream.watchlist import Watchlist
 from franken_stream.tmdb_embed import (
     tmdb_configured, tmdb_search, tmdb_trending, tmdb_now_playing,
     tmdb_upcoming, tmdb_genres, tmdb_discover_by_genre,
-    is_tmdb_url, resolve_tmdb_embed,
+    is_tmdb_url, resolve_tmdb_embed_all,
 )
 from franken_stream.iptv_live import list_countries, list_channels
 
@@ -307,10 +307,16 @@ async def get_embed(request: Request):
             raise HTTPException(status_code=400, detail="URL is required")
 
         # TMDB search results carry a synthetic `tmdb:{type}:{id}` url --
-        # resolve straight to an embed-provider URL, no scraping involved.
+        # resolve straight to embed-provider URLs, no scraping involved.
+        # Returns ALL candidates (not just the first) -- see
+        # resolve_tmdb_embed_all's docstring: these embed sites can't be
+        # reliably liveness-probed server-side (anti-automation JS runs
+        # client-side, after a 200 response), so the frontend needs real
+        # alternates to offer "try another source" when one doesn't play.
         if is_tmdb_url(page_url):
-            embed_url = await resolve_tmdb_embed(page_url)
-            return {"status": "ok", "embed_url": embed_url}
+            candidates = resolve_tmdb_embed_all(page_url)
+            embed_url = candidates[0]["url"] if candidates else None
+            return {"status": "ok", "embed_url": embed_url, "alternates": candidates}
 
         scraper = AsyncContentScraper(provider_manager=_shared_pm)
         embed_url = await scraper.fetch_embed_from_page(page_url, base_url=base_url)
