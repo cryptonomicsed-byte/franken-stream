@@ -7,13 +7,14 @@ requests+BeautifulSoup can't touch modern streaming sites anymore, and
 crawl4ai/page-agent only get you so far against active anti-bot.
 
 The fix: TMDB (themoviedb.org) is a real, free, sanctioned metadata API --
-search/trending/now_playing/upcoming, real movie/TV IDs. Separately, a
-handful of embed providers (vidsrc.to, 2embed.cc, vidsrc.xyz, vidlink.pro,
-multiembed.mov) are *designed* to be embedded -- they return real players
-keyed by TMDB/IMDb id, not bot-checks, because being embeddable is their
-whole business model (unlike the scraped sites, which actively fight
-scraping). So: TMDB for search/metadata, embed providers for the actual
-stream, old scraper kept only as a last-resort fallback.
+search/trending/now_playing/upcoming/discover-by-genre, real movie/TV IDs
+and posters. Separately, a handful of embed providers (vidsrc.to, 2embed.cc,
+vidsrc.xyz, vidlink.pro, multiembed.mov) are *designed* to be embedded --
+they return real players keyed by TMDB/IMDb id, not bot-checks, because
+being embeddable is their whole business model (unlike the scraped sites,
+which actively fight scraping). So: TMDB for search/metadata/browse, embed
+providers for the actual stream, old scraper kept only as a last-resort
+fallback.
 
 Requires TMDB_API_KEY env var (free key from themoviedb.org -- requires a
 human to register an account; this module degrades to "no results" rather
@@ -44,94 +45,87 @@ def tmdb_configured() -> bool:
     return bool(TMDB_API_KEY)
 
 
-async def tmdb_search(query: str, media_type: str = "any", limit: int = 15) -> List[dict]:
-    """Returns [{title, url, year, media_type, thumbnail}] -- url is a
-    synthetic `tmdb:{media_type}:{id}` identifier, resolved to a real
-    embed URL by resolve_tmdb_embed() below. Matches the {title,url} shape
-    /api/search already returns so no caller-side changes are needed."""
-    if not TMDB_API_KEY:
-        return []
-    endpoint = "multi" if media_type == "any" else media_type
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(
-            f"{TMDB_BASE}/search/{endpoint}",
-            params={"api_key": TMDB_API_KEY, "query": query, "include_adult": "false"},
-        )
-        if r.status_code != 200:
-            return []
-        data = r.json()
-
+def _parse_items(data: dict, default_media_type: str, limit: int) -> List[dict]:
+    """Shared row->dict mapping for search/trending/now_playing/upcoming/
+    discover -- all of TMDB's list endpoints share this result shape.
+    Returns [{title, url, year, media_type, thumbnail, rating}]."""
     results = []
     for item in data.get("results", [])[:limit]:
-        mtype = item.get("media_type") or (media_type if media_type != "any" else "movie")
+        mtype = item.get("media_type") or default_media_type
         if mtype not in ("movie", "tv"):
             continue
         title = item.get("title") or item.get("name") or "Untitled"
         date = item.get("release_date") or item.get("first_air_date") or ""
         year = int(date[:4]) if date[:4].isdigit() else None
         poster = item.get("poster_path")
+        rating = item.get("vote_average")
         results.append({
-            "title": f"{title} ({year})" if year else title,
+            "title": title,
             "url": f"tmdb:{mtype}:{item['id']}",
             "year": year,
             "media_type": mtype,
             "thumbnail": f"{TMDB_IMG_BASE}{poster}" if poster else None,
+            "rating": round(rating, 1) if isinstance(rating, (int, float)) else None,
         })
     return results
+
+
+async def _tmdb_get(path: str, params: Optional[dict] = None) -> Optional[dict]:
+    if not TMDB_API_KEY:
+        return None
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(f"{TMDB_BASE}{path}", params={"api_key": TMDB_API_KEY, **(params or {})})
+        if r.status_code != 200:
+            return None
+        return r.json()
+
+
+async def tmdb_search(query: str, media_type: str = "any", limit: int = 15) -> List[dict]:
+    """url is a synthetic `tmdb:{media_type}:{id}` identifier, resolved to a
+    real embed URL by resolve_tmdb_embed() below. Matches the {title,url}
+    shape /api/search already returns so no caller-side changes are needed."""
+    endpoint = "multi" if media_type == "any" else media_type
+    data = await _tmdb_get(f"/search/{endpoint}", {"query": query, "include_adult": "false"})
+    if not data:
+        return []
+    return _parse_items(data, media_type if media_type != "any" else "movie", limit)
 
 
 async def tmdb_trending(window: str = "week", media_type: str = "all", limit: int = 20) -> List[dict]:
     """window: 'day'|'week'. media_type: 'all'|'movie'|'tv'."""
-    if not TMDB_API_KEY:
+    data = await _tmdb_get(f"/trending/{media_type}/{window}")
+    if not data:
         return []
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(
-            f"{TMDB_BASE}/trending/{media_type}/{window}",
-            params={"api_key": TMDB_API_KEY},
-        )
-        if r.status_code != 200:
-            return []
-        data = r.json()
-    results = []
-    for item in data.get("results", [])[:limit]:
-        mtype = item.get("media_type", media_type if media_type != "all" else "movie")
-        if mtype not in ("movie", "tv"):
-            continue
-        title = item.get("title") or item.get("name") or "Untitled"
-        date = item.get("release_date") or item.get("first_air_date") or ""
-        year = int(date[:4]) if date[:4].isdigit() else None
-        poster = item.get("poster_path")
-        results.append({
-            "title": f"{title} ({year})" if year else title,
-            "url": f"tmdb:{mtype}:{item['id']}",
-            "year": year,
-            "media_type": mtype,
-            "thumbnail": f"{TMDB_IMG_BASE}{poster}" if poster else None,
-        })
-    return results
+    return _parse_items(data, media_type if media_type != "all" else "movie", limit)
 
 
 async def tmdb_now_playing(limit: int = 20) -> List[dict]:
-    if not TMDB_API_KEY:
+    data = await _tmdb_get("/movie/now_playing")
+    if not data:
         return []
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(f"{TMDB_BASE}/movie/now_playing", params={"api_key": TMDB_API_KEY})
-        if r.status_code != 200:
-            return []
-        data = r.json()
-    results = []
-    for item in data.get("results", [])[:limit]:
-        date = item.get("release_date") or ""
-        year = int(date[:4]) if date[:4].isdigit() else None
-        poster = item.get("poster_path")
-        results.append({
-            "title": f"{item.get('title','Untitled')} ({year})" if year else item.get("title", "Untitled"),
-            "url": f"tmdb:movie:{item['id']}",
-            "year": year,
-            "media_type": "movie",
-            "thumbnail": f"{TMDB_IMG_BASE}{poster}" if poster else None,
-        })
-    return results
+    return _parse_items(data, "movie", limit)
+
+
+async def tmdb_upcoming(limit: int = 20) -> List[dict]:
+    data = await _tmdb_get("/movie/upcoming")
+    if not data:
+        return []
+    return _parse_items(data, "movie", limit)
+
+
+async def tmdb_genres(media_type: str = "movie") -> List[dict]:
+    """[{id, name}] -- for a genre picker."""
+    data = await _tmdb_get(f"/genre/{media_type}/list")
+    if not data:
+        return []
+    return data.get("genres", [])
+
+
+async def tmdb_discover_by_genre(genre_id: int, media_type: str = "movie", limit: int = 20) -> List[dict]:
+    data = await _tmdb_get(f"/discover/{media_type}", {"with_genres": genre_id, "sort_by": "popularity.desc"})
+    if not data:
+        return []
+    return _parse_items(data, media_type, limit)
 
 
 def is_tmdb_url(url: str) -> bool:

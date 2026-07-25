@@ -19,6 +19,7 @@ from franken_stream.providers import ProviderManager
 from franken_stream.watchlist import Watchlist
 from franken_stream.tmdb_embed import (
     tmdb_configured, tmdb_search, tmdb_trending, tmdb_now_playing,
+    tmdb_upcoming, tmdb_genres, tmdb_discover_by_genre,
     is_tmdb_url, resolve_tmdb_embed,
 )
 from franken_stream.iptv_live import list_countries, list_channels
@@ -196,7 +197,11 @@ async def search(request: Request):
                 return {
                     "status": "ok",
                     "query": query,
-                    "results": [{"title": r["title"], "url": r["url"]} for r in tmdb_results],
+                    "results": [
+                        {"title": r["title"], "url": r["url"], "thumbnail": r["thumbnail"],
+                         "year": r.get("year"), "rating": r.get("rating"), "media_type": r.get("media_type")}
+                        for r in tmdb_results
+                    ],
                     "cached": False,
                     "source": "tmdb",
                 }
@@ -233,17 +238,38 @@ async def search(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _slim(results: list) -> dict:
+    return {"status": "ok", "results": [
+        {"title": r["title"], "url": r["url"], "thumbnail": r["thumbnail"],
+         "year": r.get("year"), "rating": r.get("rating"), "media_type": r.get("media_type")}
+        for r in results
+    ]}
+
+
 @web_app.get("/api/trending")
 async def trending(window: str = "week", media_type: str = "all"):
     """No-search-needed grid: trending movies/TV from TMDB."""
-    results = await tmdb_trending(window=window, media_type=media_type)
-    return {"status": "ok", "results": [{"title": r["title"], "url": r["url"], "thumbnail": r["thumbnail"]} for r in results]}
+    return _slim(await tmdb_trending(window=window, media_type=media_type))
 
 
 @web_app.get("/api/now-playing")
 async def now_playing():
-    results = await tmdb_now_playing()
-    return {"status": "ok", "results": [{"title": r["title"], "url": r["url"], "thumbnail": r["thumbnail"]} for r in results]}
+    return _slim(await tmdb_now_playing())
+
+
+@web_app.get("/api/upcoming")
+async def upcoming():
+    return _slim(await tmdb_upcoming())
+
+
+@web_app.get("/api/genres")
+async def genres(media_type: str = "movie"):
+    return {"status": "ok", "genres": await tmdb_genres(media_type=media_type)}
+
+
+@web_app.get("/api/discover")
+async def discover(genre_id: int, media_type: str = "movie"):
+    return _slim(await tmdb_discover_by_genre(genre_id, media_type=media_type))
 
 
 @web_app.get("/api/live/countries")
