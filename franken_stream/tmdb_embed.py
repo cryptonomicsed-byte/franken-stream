@@ -30,17 +30,39 @@ TMDB_BASE = "https://api.themoviedb.org/3"
 TMDB_IMG_BASE = "https://image.tmdb.org/t/p/w342"
 
 # Ordered by ACTUAL rendered reliability, verified live with Playwright
-# (2026-07-25) against "Inception" (tmdb id 27205), not assumption:
-#   vidlink.pro   -- real <video> element, playing, timestamps advancing. WORKS.
+# (2026-07-25/26) against "Inception" (tmdb id 27205) and a brand-new 2026
+# release (tmdb id 1368337), not assumption:
+#   vidcore.org   -- real <video> element (MSE blob: src, readyState=4),
+#                    plays on click, confirmed on BOTH test titles, ZERO
+#                    popups fired (tested with real force-clicks on the
+#                    <video> element, twice), AND tolerates the `sandbox`
+#                    iframe attribute without breaking (still plays
+#                    sandboxed). Best provider found so far on every axis
+#                    -- promoted to first priority. TV url format is an
+#                    educated guess (only movie tested); revisit if TV
+#                    playback is reported broken.
+#   vidlink.pro   -- real <video> element, playing, timestamps advancing,
+#                    on BOTH test titles. WORKS, but fires a popunder ad
+#                    (s.pemsrv.com) on ANY click inside the iframe -- and
+#                    uniquely refuses to initialize at all if a `sandbox`
+#                    attribute is present in ANY combination (tested
+#                    every token). Kept as the fallback-after-vidcore
+#                    since it's still a real working player, left
+#                    unsandboxed (see frontend SANDBOXED_EXCEPTIONS).
+#   multiembed.mov -- ALSO fires a popup on click (new finding), never
+#                    renders video either way -- sandboxed for free.
 #   2embed.cc     -- loads but lands on 2embed's own wrapper/landing page, not
 #                    the direct player (this URL format doesn't reach the
 #                    video) -- kept as fallback pending a corrected URL format.
-#   multiembed.mov, vidsrc.to -- load (200) but render an empty body, no
-#                    video element found after a real wait.
+#   vidsrc.to     -- loads (200) but renders an empty body, no video found.
 #   vidsrc.xyz    -- domain does not even resolve (net::ERR_NAME_NOT_RESOLVED,
 #                    confirmed dead), kept last only in case it comes back.
+# Investigated and confirmed dead ends (not added): vidsrc.mov (loads blank,
+# no video after 10s), superembed.stream (404 on every URL pattern tried),
+# smashystream (ad-gate "session verification failed" page, not a real embed).
 EMBED_PROVIDERS = [
     # (name, movie_url_fmt, tv_url_fmt) -- {id} = tmdb id, {s}/{e} = season/episode
+    ("vidcore.org", "https://vidcore.org/embed/movie/{id}", "https://vidcore.org/embed/tv/{id}/{s}/{e}"),
     ("vidlink.pro", "https://vidlink.pro/movie/{id}", "https://vidlink.pro/tv/{id}/{s}/{e}"),
     ("2embed.cc", "https://www.2embed.cc/embed/{id}", "https://www.2embed.cc/embedtv/{id}&s={s}&e={e}"),
     ("multiembed.mov", "https://multiembed.mov/?video_id={id}&tmdb=1", "https://multiembed.mov/?video_id={id}&tmdb=1&s={s}&e={e}"),
