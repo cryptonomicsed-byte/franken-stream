@@ -162,7 +162,7 @@ def is_tmdb_url(url: str) -> bool:
     return url.startswith("tmdb:movie:") or url.startswith("tmdb:tv:")
 
 
-def resolve_tmdb_embed_all(url: str, season: int = 1, episode: int = 1) -> List[dict]:
+async def resolve_tmdb_embed_all(url: str, season: int = 1, episode: int = 1) -> List[dict]:
     """Returns ALL candidate embed URLs, in provider-priority order:
     [{"provider": name, "url": embed_url}, ...].
 
@@ -186,6 +186,22 @@ def resolve_tmdb_embed_all(url: str, season: int = 1, episode: int = 1) -> List[
         return []
     _, mtype, tmdb_id = url.split(":", 2)
     candidates = []
+
+    # archive.org (real, legal, first-party, no ads/popups -- confirmed
+    # live) goes FIRST for older movies, ahead of every mirror-style embed
+    # provider. Only attempted for movies within ARCHIVE_YEAR_CUTOFF; see
+    # archive_org.py's docstring for why this is gated by year.
+    if mtype == "movie":
+        from .archive_org import find_archive_org_match, archive_org_embed_url
+        details = await _tmdb_get(f"/movie/{tmdb_id}")
+        if details:
+            title = details.get("title", "")
+            date = details.get("release_date", "") or ""
+            year = int(date[:4]) if date[:4].isdigit() else None
+            match = await find_archive_org_match(title, year)
+            if match:
+                candidates.append({"provider": "archive.org", "url": archive_org_embed_url(match["identifier"])})
+
     for name, movie_fmt, tv_fmt in EMBED_PROVIDERS:
         if mtype == "movie":
             candidates.append({"provider": name, "url": movie_fmt.format(id=tmdb_id)})
@@ -198,5 +214,5 @@ async def resolve_tmdb_embed(url: str, season: int = 1, episode: int = 1) -> Opt
     """Back-compat: first candidate only. Prefer resolve_tmdb_embed_all()
     for real usage -- see its docstring for why a single "the" embed URL
     isn't a reliable concept for this class of provider."""
-    all_candidates = resolve_tmdb_embed_all(url, season, episode)
+    all_candidates = await resolve_tmdb_embed_all(url, season, episode)
     return all_candidates[0]["url"] if all_candidates else None

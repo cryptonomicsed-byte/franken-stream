@@ -314,7 +314,7 @@ async def get_embed(request: Request):
         # client-side, after a 200 response), so the frontend needs real
         # alternates to offer "try another source" when one doesn't play.
         if is_tmdb_url(page_url):
-            candidates = resolve_tmdb_embed_all(page_url)
+            candidates = await resolve_tmdb_embed_all(page_url)
             embed_url = candidates[0]["url"] if candidates else None
             return {"status": "ok", "embed_url": embed_url, "alternates": candidates}
 
