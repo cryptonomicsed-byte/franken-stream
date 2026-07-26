@@ -137,28 +137,42 @@ async def musify_best_match(title: str, artist: str = "") -> Optional[dict]:
     target_title = _normalize(title)
     target_artist = _normalize(artist)
 
-    # Ranked, not first-match-wins -- a loose "contains" check picked
-    # short edits/intros/reprises over the real full track before (real
-    # bug found live: "Bohemian Rhapsody" by Queen resolved to a ~58s
-    # clip because "(Reprise)"/"(Intro)" also contain the target title
-    # as a substring and happened to list first). Exact title match
-    # beats a "starts with" / "contains" match, and artist match is
-    # required in the top tier so a cover never outranks the original.
-    def score(c: dict) -> int:
-        c_title = _normalize(c["title"])
+    # Real catalog quirk found live: for some songs (e.g. "Billie Jean")
+    # musify has ZERO plain unadorned matches -- every result carries a
+    # parenthetical qualifier (Extended/Instrumental/Demo/Acapella/1983).
+    # A non-original marker is actively wrong for "play me the song", so
+    # it's penalized hard rather than left to arbitrary list-order
+    # tie-breaking (the previous version of this fix still picked
+    # "(Extended)" over "(1983)" by accident of search-result order).
+    NON_ORIGINAL_MARKERS = (
+        "instrumental", "acapella", "extended", "remix", "cover",
+        "karaoke", "tribute", "live", "demo", "edit", "mix", "version",
+        "reprise", "intro", "outro", "medley",
+    )
+
+    def score(c: dict) -> tuple:
+        c_title_norm = _normalize(c["title"])
         c_artist = _normalize(c["artist"])
         artist_match = bool(target_artist) and c_artist == target_artist
-        if c_title == target_title and artist_match:
-            return 4  # exact title, correct artist -- the real original
-        if c_title == target_title:
-            return 3  # exact title, artist unknown/different (cover, but the full song)
-        if artist_match and (target_title in c_title or c_title in target_title):
-            return 2  # right artist, but title has extra words (edit/reprise/intro)
-        if target_title in c_title or c_title in target_title:
-            return 1  # loose title overlap only
-        return 0
+        has_marker = any(m in c["title"].lower() for m in NON_ORIGINAL_MARKERS)
+
+        if c_title_norm == target_title and artist_match:
+            base = 4  # exact title, correct artist -- the real original
+        elif c_title_norm == target_title:
+            base = 3  # exact title, artist unknown/different (cover, but the full song)
+        elif artist_match and (target_title in c_title_norm or c_title_norm in target_title):
+            base = 2  # right artist, extra words in title
+        elif target_title in c_title_norm or c_title_norm in target_title:
+            base = 1  # loose title overlap only
+        else:
+            base = 0
+        # Tiebreak within a score tier: prefer no non-original marker,
+        # then prefer the title closest in length to the target (a
+        # bare year suffix like "(1983)" is much closer to the real
+        # thing than "(Extended)" or "(Instrumental)").
+        return (base, 0 if has_marker else 1, -abs(len(c_title_norm) - len(target_title)))
 
     ranked = sorted(candidates, key=score, reverse=True)
-    if score(ranked[0]) == 0:
+    if score(ranked[0])[0] == 0:
         return None
     return ranked[0]
