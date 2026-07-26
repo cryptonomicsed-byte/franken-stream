@@ -24,7 +24,7 @@ from franken_stream.tmdb_embed import (
 )
 from franken_stream.iptv_live import list_countries, list_channels
 from franken_stream.audio_sources import (
-    itunes_search, podcast_episodes, soundcloud_embed,
+    itunes_search, itunes_album_tracks, podcast_episodes, soundcloud_embed,
     youtube_configured, youtube_search,
 )
 
@@ -306,6 +306,16 @@ async def audio_search(term: str, media: str = "music", entity: Optional[str] = 
         raise HTTPException(422, "term is required")
     results = await itunes_search(term.strip(), media=media, entity=entity)
     return {"status": "ok", "results": results}
+
+
+@web_app.get("/api/audio/album/tracks")
+async def audio_album_tracks(collection_id: int):
+    """Real per-track preview_urls for an album -- entity=album search
+    results never carry one (see itunes_album_tracks' docstring); this is
+    the follow-up lookup the frontend calls when a user wants to play an
+    album result."""
+    tracks = await itunes_album_tracks(collection_id)
+    return {"status": "ok", "tracks": tracks}
 
 
 @web_app.get("/api/audio/podcast/episodes")

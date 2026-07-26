@@ -30,6 +30,7 @@ from typing import List, Optional
 import httpx
 
 ITUNES_SEARCH_URL = "https://itunes.apple.com/search"
+ITUNES_LOOKUP_URL = "https://itunes.apple.com/lookup"
 SOUNDCLOUD_OEMBED_URL = "https://soundcloud.com/oembed"
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
@@ -64,7 +65,14 @@ async def itunes_search(term: str, media: str = "music", entity: Optional[str] =
             "title": item.get("trackName") or item.get("collectionName", "Untitled"),
             "artist": item.get("artistName", ""),
             "collection": item.get("collectionName", ""),
+            "collection_id": item.get("collectionId"),
             "artwork": _upgrade_artwork(item.get("artworkUrl100")),
+            # entity=album results NEVER carry a real preview_url -- iTunes
+            # only attaches previews at the individual-track level (confirmed
+            # live: entity=album for an album returns null, the same album's
+            # entity=song tracks return real .m4a preview URLs). Use
+            # itunes_album_tracks(collection_id) to get real, playable
+            # per-track previews for an album result.
             "preview_url": item.get("previewUrl"),
             "feed_url": item.get("feedUrl"),
             "track_count": item.get("trackCount"),
@@ -72,6 +80,32 @@ async def itunes_search(term: str, media: str = "music", entity: Optional[str] =
             "view_url": item.get("trackViewUrl") or item.get("collectionViewUrl"),
         })
     return results
+
+
+async def itunes_album_tracks(collection_id: int) -> List[dict]:
+    """Real per-track preview_urls for a specific album, via iTunes'
+    lookup endpoint (id=collectionId, entity=song) -- precise (exact
+    collection match), unlike re-searching by title/artist which can
+    land on the wrong reissue/edition. First result is always the
+    collection record itself (wrapperType='collection'), filtered out."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(ITUNES_LOOKUP_URL, params={"id": collection_id, "entity": "song"})
+        if r.status_code != 200:
+            return []
+        data = r.json()
+
+    tracks = []
+    for item in data.get("results", []):
+        if item.get("wrapperType") != "track":
+            continue
+        tracks.append({
+            "title": item.get("trackName", "Untitled"),
+            "track_number": item.get("trackNumber"),
+            "preview_url": item.get("previewUrl"),
+            "duration_ms": item.get("trackTimeMillis"),
+        })
+    tracks.sort(key=lambda t: t.get("track_number") or 0)
+    return tracks
 
 
 async def podcast_episodes(feed_url: str, limit: int = 30) -> List[dict]:
