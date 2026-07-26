@@ -27,7 +27,7 @@ from franken_stream.iptv_live import list_countries, list_channels
 from franken_stream.audio_sources import (
     itunes_search, itunes_album_tracks, podcast_episodes, soundcloud_embed,
     youtube_configured, youtube_search, itunes_charts, itunes_search_grouped,
-    resolve_full_track, MUSIC_GENRES,
+    resolve_full_track, MUSIC_GENRES, itunes_artist_albums,
 )
 from franken_stream.musify import musify_search, musify_resolve, musify_resolve_path
 from franken_stream.jamendo import jamendo_configured, jamendo_search
@@ -320,6 +320,14 @@ async def audio_album_tracks(collection_id: int):
     album result."""
     tracks = await itunes_album_tracks(collection_id)
     return {"status": "ok", "tracks": tracks}
+
+
+@web_app.get("/api/audio/artist/albums")
+async def audio_artist_albums(artist_id: int):
+    """Real discography for an artist -- powers 'search an artist -> see
+    their albums -> expand an album into its songs'."""
+    albums = await itunes_artist_albums(artist_id)
+    return {"status": "ok", "albums": albums}
 
 
 @web_app.get("/api/audio/podcast/episodes")

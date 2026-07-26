@@ -71,10 +71,14 @@ async def itunes_search(term: str, media: str = "music", entity: Optional[str] =
 
     results = []
     for item in data.get("results", []):
+        # entity=musicArtist results are a different shape entirely --
+        # no trackName/collectionName, only artistName/artistId -- handle
+        # them explicitly rather than falling through to "Untitled".
         results.append({
             "kind": item.get("kind") or item.get("wrapperType"),
-            "title": item.get("trackName") or item.get("collectionName", "Untitled"),
+            "title": item.get("trackName") or item.get("collectionName") or item.get("artistName", "Untitled"),
             "artist": item.get("artistName", ""),
+            "artist_id": item.get("artistId"),
             "collection": item.get("collectionName", ""),
             "collection_id": item.get("collectionId"),
             "artwork": _upgrade_artwork(item.get("artworkUrl100")),
@@ -88,7 +92,39 @@ async def itunes_search(term: str, media: str = "music", entity: Optional[str] =
             "feed_url": item.get("feedUrl"),
             "track_count": item.get("trackCount"),
             "genre": item.get("primaryGenreName"),
-            "view_url": item.get("trackViewUrl") or item.get("collectionViewUrl"),
+            "view_url": item.get("trackViewUrl") or item.get("collectionViewUrl") or item.get("artistLinkUrl"),
+        })
+    return results
+
+
+async def itunes_artist_albums(artist_id: int, limit: int = 25) -> List[dict]:
+    """Real discography for a specific artist (lookup by artistId,
+    entity=album) -- powers 'search an artist -> see their albums'.
+    Same dict shape as itunes_search's album results, so the frontend's
+    existing expand-to-tracks album card works unchanged."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(ITUNES_LOOKUP_URL, params={"id": artist_id, "entity": "album", "limit": limit})
+        if r.status_code != 200:
+            return []
+        data = r.json()
+
+    results = []
+    for item in data.get("results", []):
+        if item.get("wrapperType") != "collection":
+            continue
+        results.append({
+            "kind": "album",
+            "title": item.get("collectionName", "Untitled"),
+            "artist": item.get("artistName", ""),
+            "artist_id": item.get("artistId"),
+            "collection": item.get("collectionName", ""),
+            "collection_id": item.get("collectionId"),
+            "artwork": _upgrade_artwork(item.get("artworkUrl100")),
+            "preview_url": None,
+            "feed_url": None,
+            "track_count": item.get("trackCount"),
+            "genre": item.get("primaryGenreName"),
+            "view_url": item.get("collectionViewUrl"),
         })
     return results
 
