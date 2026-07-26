@@ -137,15 +137,28 @@ async def musify_best_match(title: str, artist: str = "") -> Optional[dict]:
     target_title = _normalize(title)
     target_artist = _normalize(artist)
 
-    # Pass 1: both artist and title match (the real original/correct
-    # version, not a cover/karaoke track that happens to share the title).
-    if target_artist:
-        for c in candidates:
-            if _normalize(c["artist"]) == target_artist and target_title in _normalize(c["title"]):
-                return c
-    # Pass 2: title matches closely, artist unknown or didn't match exactly
-    # (covers are still real full tracks, better than nothing).
-    for c in candidates:
-        if target_title in _normalize(c["title"]) or _normalize(c["title"]) in target_title:
-            return c
-    return None
+    # Ranked, not first-match-wins -- a loose "contains" check picked
+    # short edits/intros/reprises over the real full track before (real
+    # bug found live: "Bohemian Rhapsody" by Queen resolved to a ~58s
+    # clip because "(Reprise)"/"(Intro)" also contain the target title
+    # as a substring and happened to list first). Exact title match
+    # beats a "starts with" / "contains" match, and artist match is
+    # required in the top tier so a cover never outranks the original.
+    def score(c: dict) -> int:
+        c_title = _normalize(c["title"])
+        c_artist = _normalize(c["artist"])
+        artist_match = bool(target_artist) and c_artist == target_artist
+        if c_title == target_title and artist_match:
+            return 4  # exact title, correct artist -- the real original
+        if c_title == target_title:
+            return 3  # exact title, artist unknown/different (cover, but the full song)
+        if artist_match and (target_title in c_title or c_title in target_title):
+            return 2  # right artist, but title has extra words (edit/reprise/intro)
+        if target_title in c_title or c_title in target_title:
+            return 1  # loose title overlap only
+        return 0
+
+    ranked = sorted(candidates, key=score, reverse=True)
+    if score(ranked[0]) == 0:
+        return None
+    return ranked[0]
