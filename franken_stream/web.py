@@ -456,17 +456,11 @@ async def audio_resolve_full_track(title: str, artist: str = ""):
     return {"status": "ok", "source": match["source"], "stream_url": proxy_url}
 
 
-@web_app.get("/api/audio/proxy-stream")
-async def audio_proxy_stream(request: Request, title: str, artist: str = ""):
-    """Streams the actual audio bytes through this server -- see
-    audio_resolve_full_track's docstring for why. Re-resolves fresh each
-    call (musify's signed URLs expire ~1hr, don't cache them) and
-    forwards Range requests both ways so seeking/scrubbing works."""
-    match = await resolve_full_track(title, artist)
-    if not match:
-        raise HTTPException(404, "No full-length match found")
-    upstream_url = match["stream_url"]
-
+async def _stream_upstream(request: Request, upstream_url: str) -> StreamingResponse:
+    """Shared server-to-server streaming proxy, used by both
+    /api/audio/proxy-stream (musify) and /api/audio/archive/stream
+    (archive.org m4a files, which lack CORS headers unlike their mp3
+    siblings -- confirmed live, 2026-07-26)."""
     headers = {}
     range_header = request.headers.get("range")
     if range_header:
@@ -501,6 +495,34 @@ async def audio_proxy_stream(request: Request, title: str, artist: str = ""):
         headers=passthrough_headers,
         media_type=upstream_resp.headers.get("content-type", "audio/mpeg"),
     )
+
+
+@web_app.get("/api/audio/proxy-stream")
+async def audio_proxy_stream(request: Request, title: str, artist: str = ""):
+    """Streams the actual audio bytes through this server -- see
+    audio_resolve_full_track's docstring for why. Re-resolves fresh each
+    call (musify's signed URLs expire ~1hr, don't cache them) and
+    forwards Range requests both ways so seeking/scrubbing works."""
+    match = await resolve_full_track(title, artist)
+    if not match:
+        raise HTTPException(404, "No full-length match found")
+    return await _stream_upstream(request, match["stream_url"])
+
+
+@web_app.get("/api/audio/archive/stream")
+async def audio_archive_stream(request: Request, url: str):
+    """Proxies an archive.org file URL -- see archive_org_track_list's
+    docstring: .m4a files lack CORS headers (unlike .mp3 siblings on the
+    same item), so ALL mixtape tracks are routed through here for
+    consistency, not just the ones that would otherwise fail. Host
+    allowlist (must be an *.archive.org subdomain) since this takes a
+    caller-supplied URL, unlike proxy-stream which only ever resolves
+    URLs we derived ourselves."""
+    from urllib.parse import urlparse
+    host = urlparse(url).hostname or ""
+    if not (host == "archive.org" or host.endswith(".archive.org")):
+        raise HTTPException(400, "url must be an archive.org host")
+    return await _stream_upstream(request, url)
 
 
 @web_app.get("/api/audio/jamendo/search")

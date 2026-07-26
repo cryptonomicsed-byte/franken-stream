@@ -122,8 +122,17 @@ async def archive_org_track_list(identifier: str) -> list:
     """Real per-track direct audio URLs for a mixtape (or any archive.org
     audio item) via the metadata API -- confirmed CORS-open
     (access-control-allow-origin: *), so these play directly via a plain
-    <audio src>, no proxy needed (unlike musify.club's hotlink-blocked
-    CDN). Returns [{title, url, duration}] sorted by track number."""
+    <audio src> for MP3-format files -- BUT confirmed live (2026-07-26)
+    that archive.org's per-file CORS behavior is inconsistent by format:
+    .mp3 files (VBR MP3) get access-control-allow-origin: *, .m4a files
+    (MPEG-4 Audio) get NO CORS header at all on the same item/server.
+    Most tracks on a typical mixtape are m4a, so relying on direct
+    playback would silently fail for most of the tracklist. The 'url'
+    field returned here is a RELATIVE PROXY URL (this server's own
+    /api/audio/archive/stream) for every track regardless of format --
+    consistent, doesn't depend on archive.org's per-format quirks, same
+    proxy pattern already used for musify.club. Returns [{title, url,
+    duration}] sorted by track number."""
     from urllib.parse import quote
 
     async with httpx.AsyncClient(timeout=15) as client:
@@ -150,9 +159,10 @@ async def archive_org_track_list(identifier: str) -> list:
         name = f.get("name")
         if not name:
             continue
+        direct_url = f"https://{server}{d}/{quote(name)}"
         tracks.append({
             "title": f.get("title") or name.rsplit(".", 1)[0],
-            "url": f"https://{server}{d}/{quote(name)}",
+            "url": f"/api/audio/archive/stream?url={quote(direct_url, safe='')}",
             "duration": float(f["length"]) if f.get("length") else None,
             "_track_num": track_num(f),
         })
