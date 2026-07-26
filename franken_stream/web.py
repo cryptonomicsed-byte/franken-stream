@@ -25,9 +25,11 @@ from franken_stream.tmdb_embed import (
 from franken_stream.iptv_live import list_countries, list_channels
 from franken_stream.audio_sources import (
     itunes_search, itunes_album_tracks, podcast_episodes, soundcloud_embed,
-    youtube_configured, youtube_search,
+    youtube_configured, youtube_search, itunes_charts, itunes_search_grouped,
+    resolve_full_track, MUSIC_GENRES,
 )
 from franken_stream.musify import musify_search, musify_resolve
+from franken_stream.jamendo import jamendo_configured, jamendo_search
 
 app = typer.Typer(help="Web UI server commands")
 
@@ -366,6 +368,48 @@ async def audio_musify_resolve(track_url: str):
     if not stream_url:
         raise HTTPException(404, "Could not resolve a playable stream for that track")
     return {"status": "ok", "stream_url": stream_url}
+
+
+@web_app.get("/api/audio/search/grouped")
+async def audio_search_grouped(term: str):
+    """Real categorization: songs/albums/artists as separate sections,
+    not one flat list."""
+    if not term.strip():
+        raise HTTPException(422, "term is required")
+    return {"status": "ok", **await itunes_search_grouped(term.strip())}
+
+
+@web_app.get("/api/audio/charts")
+async def audio_charts(genre_id: Optional[int] = None, limit: int = 25):
+    """No-search-needed Trending/genre browse rows -- real Apple Top
+    Songs chart, optionally genre-scoped."""
+    results = await itunes_charts(genre_id=genre_id, limit=limit)
+    return {"status": "ok", "results": results}
+
+
+@web_app.get("/api/audio/genres")
+async def audio_genres():
+    return {"status": "ok", "genres": MUSIC_GENRES}
+
+
+@web_app.get("/api/audio/resolve-full-track")
+async def audio_resolve_full_track(title: str, artist: str = ""):
+    """Unified 'smart play': tries musify.club then Jamendo (if
+    configured) for a real full-length match before the frontend falls
+    back to the 30s iTunes preview. 404 if nothing found -- not an
+    error, just "no full track available, use the preview"."""
+    match = await resolve_full_track(title, artist)
+    if not match:
+        raise HTTPException(404, "No full-length match found")
+    return {"status": "ok", **match}
+
+
+@web_app.get("/api/audio/jamendo/search")
+async def audio_jamendo_search(term: str):
+    if not jamendo_configured():
+        return {"status": "ok", "results": [], "configured": False}
+    results = await jamendo_search(term)
+    return {"status": "ok", "results": results, "configured": True}
 
 
 @web_app.post("/api/embed")

@@ -31,9 +31,20 @@ import httpx
 
 ITUNES_SEARCH_URL = "https://itunes.apple.com/search"
 ITUNES_LOOKUP_URL = "https://itunes.apple.com/lookup"
+ITUNES_CHARTS_URL = "https://itunes.apple.com/us/rss/topsongs/limit={limit}/json"
+ITUNES_CHARTS_GENRE_URL = "https://itunes.apple.com/us/rss/topsongs/limit={limit}/genre={genre_id}/json"
 SOUNDCLOUD_OEMBED_URL = "https://soundcloud.com/oembed"
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
+
+# Apple's own documented, stable genre IDs (classic iTunes RSS charts API).
+MUSIC_GENRES = [
+    {"id": 20, "name": "Alternative"}, {"id": 21, "name": "Rock"},
+    {"id": 14, "name": "Pop"}, {"id": 15, "name": "R&B/Soul"},
+    {"id": 18, "name": "Hip-Hop/Rap"}, {"id": 17, "name": "Dance"},
+    {"id": 24, "name": "Reggae"}, {"id": 6, "name": "Country"},
+    {"id": 11, "name": "Jazz"}, {"id": 12, "name": "Classical"},
+]
 
 
 def _upgrade_artwork(url: Optional[str]) -> Optional[str]:
@@ -190,3 +201,71 @@ async def youtube_search(term: str, limit: int = 15) -> List[dict]:
             "embed_url": f"https://www.youtube.com/embed/{vid}",
         })
     return results
+
+
+async def itunes_charts(genre_id: Optional[int] = None, limit: int = 25) -> List[dict]:
+    """Real Apple Top Songs chart -- classic iTunes RSS API (free, no
+    key), optionally scoped to a genre. Powers the no-search-needed
+    Trending/genre browse rows, same role TMDB's /trending plays for
+    movies."""
+    url = (ITUNES_CHARTS_GENRE_URL.format(limit=limit, genre_id=genre_id)
+           if genre_id else ITUNES_CHARTS_URL.format(limit=limit))
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(url)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+
+    results = []
+    for e in data.get("feed", {}).get("entry", []):
+        images = e.get("im:image", [])
+        artwork = images[-1]["label"] if images else None
+        # 170x170 is the biggest the RSS feed itself offers; upgrade it
+        # the same way search results are upgraded.
+        artwork = _upgrade_artwork(artwork) if artwork else None
+        results.append({
+            "title": e.get("im:name", {}).get("label", "Untitled"),
+            "artist": e.get("im:artist", {}).get("label", ""),
+            "collection": e.get("im:collection", {}).get("im:name", {}).get("label", ""),
+            "artwork": artwork,
+        })
+    return results
+
+
+async def itunes_search_grouped(term: str, limit: int = 12) -> dict:
+    """Real categorization: parallel iTunes searches by entity, grouped
+    into {songs, albums, artists} instead of one flat list."""
+    import asyncio as _asyncio
+    songs, albums, artists = await _asyncio.gather(
+        itunes_search(term, media="music", entity="song", limit=limit),
+        itunes_search(term, media="music", entity="album", limit=limit),
+        itunes_search(term, media="music", entity="musicArtist", limit=limit),
+    )
+    return {"songs": songs, "albums": albums, "artists": artists}
+
+
+async def resolve_full_track(title: str, artist: str = "") -> Optional[dict]:
+    """Unified 'smart play': tries real full-length sources (musify.club,
+    then Jamendo) before the caller falls back to a 30s iTunes preview.
+    Returns {"source": ..., "stream_url": ...} or None if nothing found.
+    This is what makes clicking a search result play the actual track
+    instead of a preview whenever a real match exists."""
+    from .musify import musify_search, musify_resolve
+    from .jamendo import jamendo_configured, jamendo_search
+
+    query = f"{artist} {title}".strip()
+    candidates = await musify_search(query, limit=3)
+    target = re.sub(r"[^a-z0-9]", "", title.lower())
+    for c in candidates:
+        if target in re.sub(r"[^a-z0-9]", "", c["title"].lower()):
+            stream_url = await musify_resolve(c["track_url"])
+            if stream_url:
+                return {"source": "musify.club", "stream_url": stream_url}
+
+    if jamendo_configured():
+        jam_results = await jamendo_search(query, limit=3)
+        for j in jam_results:
+            if j.get("audio_url") and target in re.sub(r"[^a-z0-9]", "", j["title"].lower()):
+                return {"source": "jamendo", "stream_url": j["audio_url"]}
+
+    return None
