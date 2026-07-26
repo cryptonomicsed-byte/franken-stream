@@ -5,9 +5,10 @@ from http import HTTPStatus
 from pathlib import Path
 from typing import Optional, Set
 
+import httpx
 import typer
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
@@ -397,11 +398,72 @@ async def audio_resolve_full_track(title: str, artist: str = ""):
     """Unified 'smart play': tries musify.club then Jamendo (if
     configured) for a real full-length match before the frontend falls
     back to the 30s iTunes preview. 404 if nothing found -- not an
-    error, just "no full track available, use the preview"."""
+    error, just "no full track available, use the preview".
+
+    Returns a PROXY URL (this server's own /api/audio/proxy-stream), not
+    the raw upstream URL. Root cause found live: musify.club's CDN
+    returns 403 the instant a browser sends a cross-origin Origin
+    header (confirmed: identical request with no Origin -> 200, with
+    Origin -> 403) -- a real anti-hotlink check, not an anti-bot/JS gate
+    (crawl4ai/oniux don't apply here, there's no JS rendering or IP
+    reputation involved). A direct <audio src> from Vantage's frontend
+    origin was being silently blocked by this. Proxying the bytes
+    through our own backend fixes it: the upstream fetch is server-to-
+    server (no browser Origin header sent), and the browser only ever
+    talks to our own origin."""
     match = await resolve_full_track(title, artist)
     if not match:
         raise HTTPException(404, "No full-length match found")
-    return {"status": "ok", **match}
+    from urllib.parse import quote
+    proxy_url = f"/api/audio/proxy-stream?title={quote(title)}&artist={quote(artist)}"
+    return {"status": "ok", "source": match["source"], "stream_url": proxy_url}
+
+
+@web_app.get("/api/audio/proxy-stream")
+async def audio_proxy_stream(request: Request, title: str, artist: str = ""):
+    """Streams the actual audio bytes through this server -- see
+    audio_resolve_full_track's docstring for why. Re-resolves fresh each
+    call (musify's signed URLs expire ~1hr, don't cache them) and
+    forwards Range requests both ways so seeking/scrubbing works."""
+    match = await resolve_full_track(title, artist)
+    if not match:
+        raise HTTPException(404, "No full-length match found")
+    upstream_url = match["stream_url"]
+
+    headers = {}
+    range_header = request.headers.get("range")
+    if range_header:
+        headers["Range"] = range_header
+
+    client = httpx.AsyncClient(timeout=30, follow_redirects=True)
+    upstream_req = client.build_request("GET", upstream_url, headers=headers)
+    upstream_resp = await client.send(upstream_req, stream=True)
+
+    if upstream_resp.status_code >= 400:
+        await upstream_resp.aclose()
+        await client.aclose()
+        raise HTTPException(502, f"Upstream returned {upstream_resp.status_code}")
+
+    async def body_iterator():
+        try:
+            async for chunk in upstream_resp.aiter_bytes(65536):
+                yield chunk
+        finally:
+            await upstream_resp.aclose()
+            await client.aclose()
+
+    passthrough_headers = {}
+    for h in ("content-type", "content-length", "content-range", "accept-ranges"):
+        if h in upstream_resp.headers:
+            passthrough_headers[h] = upstream_resp.headers[h]
+    passthrough_headers.setdefault("accept-ranges", "bytes")
+
+    return StreamingResponse(
+        body_iterator(),
+        status_code=upstream_resp.status_code,
+        headers=passthrough_headers,
+        media_type=upstream_resp.headers.get("content-type", "audio/mpeg"),
+    )
 
 
 @web_app.get("/api/audio/jamendo/search")
