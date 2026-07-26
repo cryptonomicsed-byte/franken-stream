@@ -27,6 +27,7 @@ from franken_stream.audio_sources import (
     itunes_search, itunes_album_tracks, podcast_episodes, soundcloud_embed,
     youtube_configured, youtube_search,
 )
+from franken_stream.musify import musify_search, musify_resolve
 
 app = typer.Typer(help="Web UI server commands")
 
@@ -344,6 +345,27 @@ async def audio_youtube_search(term: str):
         return {"status": "ok", "results": [], "configured": False}
     results = await youtube_search(term)
     return {"status": "ok", "results": results, "configured": True}
+
+
+@web_app.get("/api/audio/musify/search")
+async def audio_musify_search(term: str):
+    """Real full-length track search via musify.club. DISCLOSED, NOT
+    HIDDEN: unlicensed commercial music mirror, meaningfully higher legal
+    risk than the movie-embed providers -- see musify.py's docstring."""
+    if not term.strip():
+        raise HTTPException(422, "term is required")
+    results = await musify_search(term.strip())
+    return {"status": "ok", "results": results}
+
+
+@web_app.get("/api/audio/musify/resolve")
+async def audio_musify_resolve(track_url: str):
+    """Resolves a musify.club track page to its actual time-limited,
+    directly-streamable full-track URL (expires ~1hr, resolve on demand)."""
+    stream_url = await musify_resolve(track_url)
+    if not stream_url:
+        raise HTTPException(404, "Could not resolve a playable stream for that track")
+    return {"status": "ok", "stream_url": stream_url}
 
 
 @web_app.post("/api/embed")
