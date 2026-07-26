@@ -31,6 +31,7 @@ from franken_stream.audio_sources import (
 )
 from franken_stream.musify import musify_search, musify_resolve, musify_resolve_path
 from franken_stream.jamendo import jamendo_configured, jamendo_search
+from franken_stream.archive_org import find_archive_org_mixtapes, archive_org_track_list
 
 app = typer.Typer(help="Web UI server commands")
 
@@ -328,6 +329,27 @@ async def audio_artist_albums(artist_id: int):
     their albums -> expand an album into its songs'."""
     albums = await itunes_artist_albums(artist_id)
     return {"status": "ok", "albums": albums}
+
+
+@web_app.get("/api/audio/mixtapes")
+async def audio_mixtapes(artist: str):
+    """Real mixtapes for an artist via archive.org's hiphopmixtapes
+    collection -- DatPiff's own official successor (DatPiff shut down its
+    live site and partnered with archive.org, confirmed live 2026-07-26).
+    No year gate (unlike the movie side): mixtapes are a contemporary
+    genre, the collection scope itself is the legitimacy signal."""
+    if not artist.strip():
+        raise HTTPException(422, "artist is required")
+    mixtapes = await find_archive_org_mixtapes(artist.strip())
+    return {"status": "ok", "mixtapes": mixtapes}
+
+
+@web_app.get("/api/audio/mixtape/tracks")
+async def audio_mixtape_tracks(identifier: str):
+    """Real per-track direct audio URLs for a mixtape (archive.org
+    metadata API, CORS-open -- no proxy needed, unlike musify.club)."""
+    tracks = await archive_org_track_list(identifier)
+    return {"status": "ok", "tracks": tracks}
 
 
 @web_app.get("/api/audio/podcast/episodes")

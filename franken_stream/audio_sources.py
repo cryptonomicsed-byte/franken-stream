@@ -97,11 +97,22 @@ async def itunes_search(term: str, media: str = "music", entity: Optional[str] =
     return results
 
 
-async def itunes_artist_albums(artist_id: int, limit: int = 25) -> List[dict]:
+async def itunes_artist_albums(artist_id: int, limit: int = 200) -> List[dict]:
     """Real discography for a specific artist (lookup by artistId,
     entity=album) -- powers 'search an artist -> see their albums'.
     Same dict shape as itunes_search's album results, so the frontend's
-    existing expand-to-tracks album card works unchanged."""
+    existing expand-to-tracks album card works unchanged.
+
+    Real bug found live (2026-07-26): with the default limit (25) most of
+    a prolific artist's real albums were getting cut off, AND the results
+    were dominated by other artists' "feat. {artist}" guest-appearance
+    singles -- the lookup-by-artist endpoint returns EVERY release the
+    artist appears on, not just their own. Confirmed via a raw item dump:
+    a Mike Posner single featuring Lil Wayne has artistId=333687585 (Mike
+    Posner's own ID), NOT Lil Wayne's -- so filtering strictly on
+    item["artistId"] == artist_id keeps only albums the artist actually
+    owns, and bumping the limit to 200 (iTunes' effective max) stops
+    truncating large discographies."""
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.get(ITUNES_LOOKUP_URL, params={"id": artist_id, "entity": "album", "limit": limit})
         if r.status_code != 200:
@@ -112,6 +123,8 @@ async def itunes_artist_albums(artist_id: int, limit: int = 25) -> List[dict]:
     for item in data.get("results", []):
         if item.get("wrapperType") != "collection":
             continue
+        if item.get("artistId") != artist_id:
+            continue  # a guest-feature single/album by a DIFFERENT primary artist
         results.append({
             "kind": "album",
             "title": item.get("collectionName", "Untitled"),
