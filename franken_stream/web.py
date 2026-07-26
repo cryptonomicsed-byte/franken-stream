@@ -29,7 +29,7 @@ from franken_stream.audio_sources import (
     youtube_configured, youtube_search, itunes_charts, itunes_search_grouped,
     resolve_full_track, MUSIC_GENRES,
 )
-from franken_stream.musify import musify_search, musify_resolve
+from franken_stream.musify import musify_search, musify_resolve, musify_resolve_path
 from franken_stream.jamendo import jamendo_configured, jamendo_search
 
 app = typer.Typer(help="Web UI server commands")
@@ -362,10 +362,17 @@ async def audio_musify_search(term: str):
 
 
 @web_app.get("/api/audio/musify/resolve")
-async def audio_musify_resolve(track_url: str):
-    """Resolves a musify.club track page to its actual time-limited,
-    directly-streamable full-track URL (expires ~1hr, resolve on demand)."""
-    stream_url = await musify_resolve(track_url)
+async def audio_musify_resolve(mp3_path: Optional[str] = None, track_url: Optional[str] = None):
+    """Resolves a musify.club mp3_path (from /musify/search, preferred --
+    no second page fetch needed) or a legacy track_url (back-compat,
+    refetches the page) to the actual time-limited, directly-streamable
+    full-track URL (expires ~1hr, resolve on demand)."""
+    if mp3_path:
+        stream_url = await musify_resolve_path(mp3_path)
+    elif track_url:
+        stream_url = await musify_resolve(track_url)
+    else:
+        raise HTTPException(422, "mp3_path or track_url is required")
     if not stream_url:
         raise HTTPException(404, "Could not resolve a playable stream for that track")
     return {"status": "ok", "stream_url": stream_url}

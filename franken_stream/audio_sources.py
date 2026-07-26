@@ -250,19 +250,18 @@ async def resolve_full_track(title: str, artist: str = "") -> Optional[dict]:
     Returns {"source": ..., "stream_url": ...} or None if nothing found.
     This is what makes clicking a search result play the actual track
     instead of a preview whenever a real match exists."""
-    from .musify import musify_search, musify_resolve
+    from .musify import musify_best_match, musify_resolve_path
     from .jamendo import jamendo_configured, jamendo_search
 
-    query = f"{artist} {title}".strip()
-    candidates = await musify_search(query, limit=3)
-    target = re.sub(r"[^a-z0-9]", "", title.lower())
-    for c in candidates:
-        if target in re.sub(r"[^a-z0-9]", "", c["title"].lower()):
-            stream_url = await musify_resolve(c["track_url"])
-            if stream_url:
-                return {"source": "musify.club", "stream_url": stream_url}
+    match = await musify_best_match(title, artist)
+    if match:
+        stream_url = await musify_resolve_path(match["mp3_path"])
+        if stream_url:
+            return {"source": "musify.club", "stream_url": stream_url}
 
     if jamendo_configured():
+        query = f"{artist} {title}".strip()
+        target = re.sub(r"[^a-z0-9]", "", title.lower())
         jam_results = await jamendo_search(query, limit=3)
         for j in jam_results:
             if j.get("audio_url") and target in re.sub(r"[^a-z0-9]", "", j["title"].lower()):
