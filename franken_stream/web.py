@@ -85,6 +85,19 @@ async def get_health():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@web_app.get("/api/integrations/status")
+async def get_integration_status():
+    """Real, read-only booleans for which optional API-key-gated audio/video
+    sources are actually configured on this host -- backs Vantage's
+    Settings > Integrations tab. No secrets returned, just presence."""
+    import os
+    return {
+        "tmdb": bool(os.environ.get("TMDB_API_KEY", "")),
+        "youtube": bool(os.environ.get("YOUTUBE_API_KEY", "")),
+        "jamendo": bool(os.environ.get("JAMENDO_CLIENT_ID", "")),
+    }
+
+
 @web_app.get("/api/providers")
 async def get_providers():
     """Get available search providers"""
